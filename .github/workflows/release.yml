@@ -1,0 +1,53 @@
+# Builds the same unsigned Debug .app as `make local`, zips it, and attaches the archive
+# when you publish a GitHub Release.
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    # First run may clone + build whisper.xcframework (often 30–90+ minutes); cache makes later runs much faster.
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Xcode and Swift toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          swift --version
+
+      - name: Cache whisper.xcframework build
+        uses: actions/cache@v4
+        with:
+          path: ~/VoiceInk-Dependencies
+          key: ${{ runner.os }}-voiceink-whisper-${{ hashFiles('Makefile') }}
+          restore-keys: |
+            ${{ runner.os }}-voiceink-whisper-
+
+      - name: Build (same as make local → dist/)
+        run: make ci-release
+
+      - name: Zip VoiceInk.app
+        run: |
+          set -euo pipefail
+          cd dist
+          ZIP_NAME="VoiceInk-${{ github.event.release.tag_name }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent VoiceInk.app "$ZIP_NAME"
+          shasum -a 256 "$ZIP_NAME" | tee "$ZIP_NAME.sha256"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/VoiceInk-${{ github.event.release.tag_name }}.zip
+            dist/VoiceInk-${{ github.event.release.tag_name }}.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,8 +3,12 @@ DEPS_DIR := $(HOME)/VoiceInk-Dependencies
 WHISPER_CPP_DIR := $(DEPS_DIR)/whisper.cpp
 FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
+# Same Xcode configuration as `make local` (Debug + LocalBuild.xcconfig)
+LOCAL_BUILD_CONFIG := Debug
+# CI release packaging: copy the built .app here instead of ~/Downloads
+DIST_DIR ?= $(CURDIR)/dist
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run
+.PHONY: all clean whisper setup build local ci-release _local-app-bundle check healthcheck help dev run
 
 # Default target
 all: check build
@@ -44,11 +48,11 @@ setup: whisper
 build: setup
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug CODE_SIGN_IDENTITY="" build
 
-# Build for local use without Apple Developer certificate
-local: check setup
+# Shared xcodebuild for `make local` and `make ci-release` (identical product)
+_local-app-bundle: check setup
 	@echo "Building VoiceInk for local use (no Apple Developer certificate required)..."
 	@rm -rf "$(LOCAL_DERIVED_DATA)"
-	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
+	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration $(LOCAL_BUILD_CONFIG) \
 		-derivedDataPath "$(LOCAL_DERIVED_DATA)" \
 		-xcconfig LocalBuild.xcconfig \
 		CODE_SIGN_IDENTITY="-" \
@@ -58,7 +62,10 @@ local: check setup
 		CODE_SIGN_ENTITLEMENTS=$(CURDIR)/VoiceInk/VoiceInk.local.entitlements \
 		SWIFT_ACTIVE_COMPILATION_CONDITIONS='$$(inherited) LOCAL_BUILD' \
 		build
-	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/Debug/VoiceInk.app" && \
+
+# Build for local use without Apple Developer certificate
+local: _local-app-bundle
+	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/$(LOCAL_BUILD_CONFIG)/VoiceInk.app" && \
 	if [ -d "$$APP_PATH" ]; then \
 		echo "Copying VoiceInk.app to ~/Downloads..."; \
 		rm -rf "$$HOME/Downloads/VoiceInk.app"; \
@@ -71,6 +78,20 @@ local: check setup
 		echo "Limitations of local builds:"; \
 		echo "  - No iCloud dictionary sync"; \
 		echo "  - No automatic updates (pull new code and rebuild to update)"; \
+	else \
+		echo "Error: Could not find built VoiceInk.app at $$APP_PATH"; \
+		exit 1; \
+	fi
+
+# Same build as `make local`; copy .app to $(DIST_DIR) for CI zipping (not ~/Downloads)
+ci-release: _local-app-bundle
+	@rm -rf "$(DIST_DIR)"
+	@mkdir -p "$(DIST_DIR)"
+	@APP_PATH="$(LOCAL_DERIVED_DATA)/Build/Products/$(LOCAL_BUILD_CONFIG)/VoiceInk.app" && \
+	if [ -d "$$APP_PATH" ]; then \
+		ditto "$$APP_PATH" "$(DIST_DIR)/VoiceInk.app"; \
+		xattr -cr "$(DIST_DIR)/VoiceInk.app"; \
+		echo "Built (same as make local): $(DIST_DIR)/VoiceInk.app"; \
 	else \
 		echo "Error: Could not find built VoiceInk.app at $$APP_PATH"; \
 		exit 1; \
@@ -107,6 +128,7 @@ help:
 	@echo "  setup              Copy whisper XCFramework to VoiceInk project"
 	@echo "  build              Build the VoiceInk Xcode project"
 	@echo "  local              Build for local use (no Apple Developer certificate needed)"
+	@echo "  ci-release         CI: same as local build, app in ./dist/VoiceInk.app"
 	@echo "  run                Launch the built VoiceInk app"
 	@echo "  dev                Build and run the app (for development)"
 	@echo "  all                Run full build process (default)"
