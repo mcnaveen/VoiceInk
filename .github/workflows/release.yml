@@ -19,12 +19,26 @@ permissions:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    # macos-15+ images ship multiple Xcodes; default is often 16.x (Swift 6.1). LLMKit requires Swift tools 6.2+.
+    runs-on: macos-15
     # First run may clone + build whisper.xcframework (often 30–90+ minutes); cache makes later runs much faster.
     timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Select Xcode (Swift 6.2+ for LLMKit SPM)
+        run: |
+          for app in Xcode_26.3.app Xcode_26.2.app Xcode_26.1.1.app; do
+            dev="/Applications/$app/Contents/Developer"
+            if [ -d "$dev" ]; then
+              echo "Using $dev"
+              sudo xcode-select -s "$dev"
+              exit 0
+            fi
+          done
+          echo "No Xcode 26.x found under /Applications"; ls /Applications/Xcode*.app || true
+          exit 1
 
       - name: Xcode and Swift toolchain
         run: |
