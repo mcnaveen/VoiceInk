@@ -1,10 +1,18 @@
-# Builds the same unsigned Debug .app as `make local`, zips it, and attaches the archive
-# when you publish a GitHub Release.
+# Builds the same unsigned Debug .app as `make local`, zips it, then either:
+# - attaches the zip to a GitHub Release when you publish one, or
+# - stores the zip as a downloadable Actions artifact when you run the workflow manually.
 name: Release
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      artifact_label:
+        description: "Zip base name suffix (VoiceInk-<label>.zip). Leave empty for manual-<run_number>."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -38,16 +46,39 @@ jobs:
       - name: Zip VoiceInk.app
         run: |
           set -euo pipefail
+          case "${{ github.event_name }}" in
+            release)
+              LABEL="${{ github.event.release.tag_name }}"
+              ;;
+            workflow_dispatch)
+              LABEL="${{ github.event.inputs.artifact_label }}"
+              if [ -z "$LABEL" ]; then LABEL="manual-${{ github.run_number }}"; fi
+              ;;
+            *)
+              LABEL="manual-${{ github.run_number }}"
+              ;;
+          esac
+          echo "LABEL=$LABEL" >> "$GITHUB_ENV"
           cd dist
-          ZIP_NAME="VoiceInk-${{ github.event.release.tag_name }}.zip"
-          ditto -c -k --sequesterRsrc --keepParent VoiceInk.app "$ZIP_NAME"
-          shasum -a 256 "$ZIP_NAME" | tee "$ZIP_NAME.sha256"
+          ditto -c -k --sequesterRsrc --keepParent VoiceInk.app "VoiceInk-${LABEL}.zip"
+          shasum -a 256 "VoiceInk-${LABEL}.zip" | tee "VoiceInk-${LABEL}.zip.sha256"
 
       - name: Upload release assets
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/VoiceInk-${{ github.event.release.tag_name }}.zip
-            dist/VoiceInk-${{ github.event.release.tag_name }}.zip.sha256
+            dist/VoiceInk-${{ env.LABEL }}.zip
+            dist/VoiceInk-${{ env.LABEL }}.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload workflow artifact (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoiceInk-${{ env.LABEL }}
+          path: |
+            dist/VoiceInk-${{ env.LABEL }}.zip
+            dist/VoiceInk-${{ env.LABEL }}.zip.sha256
+          if-no-files-found: error
